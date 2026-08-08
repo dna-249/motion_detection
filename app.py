@@ -6,13 +6,13 @@ import threading
 import time
 from datetime import datetime
 from functools import wraps
-from flask import Flask, Response, render_template_string, request
+from flask import Flask, Response, render_template_string, request, send_from_directory
 
 app = Flask(__name__)
 
 # --- CONFIGURATION ---
 USERNAME = "admin"
-PASSWORD = "dna"  # Change this to your desired password
+PASSWORD = "dna"  
 PORT = 5002
 SAVE_DIR = "captures"
 MIN_CONTOUR_AREA = 2500       # Sensitivity (lower = more sensitive)
@@ -29,7 +29,6 @@ def start_public_tunnel():
             cmd = ["cloudflared", "tunnel", "--url", f"http://localhost:{PORT}"]
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             
-            # Scan subprocess logs for the public trycloudflare.com URL
             for line in iter(process.stdout.readline, ''):
                 if "trycloudflare.com" in line:
                     match = re.search(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com', line)
@@ -38,15 +37,15 @@ def start_public_tunnel():
                         print("\n" + "="*60)
                         print(f" [★] LIVE PUBLIC CAMERA URL:")
                         print(f"     {public_url}")
+                        print(f" [★] MOTION GALLERY URL:")
+                        print(f"     {public_url}/gallery")
                         print("="*60 + "\n")
                         break
         except FileNotFoundError:
-            print("\n[!] 'cloudflared' binary not found.")
-            print("[!] Install it using: sudo apt install cloudflared -y\n")
+            print("\n[!] 'cloudflared' binary not found. Install via: sudo dpkg -i cloudflared.deb\n")
         except Exception as e:
             print(f"\n[!] Tunnel error: {e}\n")
 
-    # Run tunnel asynchronously so it doesn't block Flask
     threading.Thread(target=_tunnel_thread, daemon=True).start()
 
 # --- HTTP BASIC AUTHENTICATION DECORATOR ---
@@ -73,7 +72,6 @@ def generate_frames():
         if not success:
             break
 
-        # Motion detection processing
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (21, 21), 0)
 
@@ -125,12 +123,17 @@ def index():
         <head>
             <title>Starlink Security Camera</title>
             <style>
-                body { font-family: sans-serif; background: #121212; color: #fff; text-align: center; margin-top: 2rem; }
+                body { font-family: -apple-system, sans-serif; background: #121212; color: #fff; text-align: center; margin: 0; padding: 2rem 1rem; }
+                .nav { margin-bottom: 1.5rem; }
+                .nav a { color: #38bdf8; text-decoration: none; font-weight: bold; margin: 0 10px; }
                 .card { display: inline-block; background: #1e1e1e; padding: 1rem; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
                 img { max-width: 100%; height: auto; border-radius: 4px; border: 2px solid #333; }
             </style>
         </head>
         <body>
+            <div class="nav">
+                <a href="/">Live Feed</a> | <a href="/gallery">Snapshot Gallery</a>
+            </div>
             <h2>Starlink Security Camera Feed</h2>
             <div class="card">
                 <img src="/video_feed" alt="Live Feed">
@@ -139,12 +142,56 @@ def index():
         </html>
     ''')
 
+@app.route('/gallery')
+@check_auth
+def gallery():
+    images = sorted(os.listdir(SAVE_DIR), reverse=True)
+    return render_template_string('''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Motion Snapshots</title>
+            <style>
+                body { font-family: -apple-system, sans-serif; background: #121212; color: #fff; text-align: center; margin: 0; padding: 2rem 1rem; }
+                .nav { margin-bottom: 1.5rem; }
+                .nav a { color: #38bdf8; text-decoration: none; font-weight: bold; margin: 0 10px; }
+                .grid { display: flex; flex-wrap: wrap; gap: 1rem; justify-content: center; max-width: 1200px; margin: 0 auto; }
+                .img-card { background: #1e1e1e; padding: 0.5rem; border-radius: 6px; width: 300px; }
+                .img-card img { width: 100%; border-radius: 4px; }
+                .timestamp { font-size: 0.8rem; color: #aaa; margin-top: 0.4rem; }
+            </style>
+        </head>
+        <body>
+            <div class="nav">
+                <a href="/">Live Feed</a> | <a href="/gallery">Snapshot Gallery</a>
+            </div>
+            <h2>Recorded Motion Events ({{ images|length }})</h2>
+            <div class="grid">
+                {% for img in images %}
+                    <div class="img-card">
+                        <a href="/captures/{{ img }}" target="_blank">
+                            <img src="/captures/{{ img }}" alt="Motion">
+                        </a>
+                        <div class="timestamp">{{ img }}</div>
+                    </div>
+                {% else %}
+                    <p>No motion captures recorded yet.</p>
+                {% endfor %}
+            </div>
+        </body>
+        </html>
+    ''', images=images)
+
+@app.route('/captures/<filename>')
+@check_auth
+def get_capture(filename):
+    return send_from_directory(SAVE_DIR, filename)
+
 @app.route('/video_feed')
 @check_auth
 def video_feed():
     return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 if __name__ == '__main__':
-    # Start the tunnel thread right before launching Flask
     start_public_tunnel()
     app.run(host='0.0.0.0', port=PORT, debug=False)
