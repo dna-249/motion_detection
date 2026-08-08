@@ -21,6 +21,14 @@ COOLDOWN_SECONDS = 3          # Seconds between saving snapshots
 if not os.path.exists(SAVE_DIR):
     os.makedirs(SAVE_DIR)
 
+# --- CORS HEADERS FOR VERCEL INTEROPERABILITY ---
+@app.after_request
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    return response
+
 # --- AUTOMATIC PUBLIC TUNNEL FUNCTION ---
 def start_public_tunnel():
     """Starts cloudflared in the background and prints the public URL to the screen."""
@@ -52,6 +60,10 @@ def start_public_tunnel():
 def check_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
+        # Allow OPTIONS requests to bypass auth for browser CORS preflight checks
+        if request.method == 'OPTIONS':
+            return Response(status=200)
+            
         auth = request.authorization
         if not auth or auth.username != USERNAME or auth.password != PASSWORD:
             return Response(
@@ -114,7 +126,7 @@ def generate_frames():
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
-@app.route('/')
+@app.route('/', methods=['GET', 'OPTIONS'])
 @check_auth
 def index():
     return render_template_string('''
@@ -142,7 +154,7 @@ def index():
         </html>
     ''')
 
-@app.route('/gallery')
+@app.route('/gallery', methods=['GET', 'OPTIONS'])
 @check_auth
 def gallery():
     images = sorted(os.listdir(SAVE_DIR), reverse=True)
@@ -182,12 +194,12 @@ def gallery():
         </html>
     ''', images=images)
 
-@app.route('/captures/<filename>')
+@app.route('/captures/<filename>', methods=['GET', 'OPTIONS'])
 @check_auth
 def get_capture(filename):
     return send_from_directory(SAVE_DIR, filename)
 
-@app.route('/video_feed')
+@app.route('/video_feed', methods=['GET', 'OPTIONS'])
 @check_auth
 def video_feed():
     return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
