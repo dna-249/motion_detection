@@ -3,23 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Application Dashboard</title>
+  <title>Starlink Camera Dashboard</title>
   <style>
     :root {
       --bg-color: #0f172a;
       --card-bg: #1e293b;
       --text-color: #f8fafc;
       --accent-color: #38bdf8;
+      --danger-color: #f87171;
+      --success-color: #4ade80;
     }
 
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: system-ui, -apple-system, sans-serif;
       background-color: var(--bg-color);
       color: var(--text-color);
       display: flex;
@@ -29,52 +27,189 @@
       padding: 1rem;
     }
 
+    .container {
+      max-width: 600px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
     .card {
       background-color: var(--card-bg);
       border-radius: 12px;
       padding: 2rem;
-      max-width: 480px;
-      width: 100%;
       box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
       text-align: center;
     }
 
-    h1 {
-      font-size: 1.75rem;
+    h1 { font-size: 1.75rem; margin-bottom: 0.5rem; color: var(--accent-color); }
+    p { color: #94a3b8; line-height: 1.6; margin-bottom: 1.25rem; font-size: 0.95rem; }
+
+    .input-group {
+      display: flex;
+      gap: 0.5rem;
       margin-bottom: 1rem;
-      color: var(--accent-color);
     }
 
-    p {
-      color: #94a3b8;
-      line-height: 1.6;
-      margin-bottom: 1.5rem;
+    input {
+      flex: 1;
+      padding: 0.75rem;
+      border-radius: 6px;
+      border: 1px solid #334155;
+      background: #0f172a;
+      color: #fff;
+      font-size: 0.9rem;
     }
 
     .btn {
       background-color: var(--accent-color);
       color: #0f172a;
       border: none;
-      padding: 0.75rem 1.5rem;
-      font-size: 1rem;
+      padding: 0.75rem 1.25rem;
+      font-size: 0.95rem;
       font-weight: 600;
       border-radius: 6px;
       cursor: pointer;
       transition: opacity 0.2s;
     }
 
-    .btn:hover {
-      opacity: 0.9;
+    .btn:hover { opacity: 0.9; }
+
+    .btn-clear {
+      background-color: transparent;
+      border: 1px solid #334155;
+      color: #94a3b8;
+    }
+
+    .btn-clear:hover { background-color: #334155; color: #fff; }
+
+    #status-text { margin-top: 0.5rem; font-weight: bold; font-size: 0.95rem; }
+
+    /* Stream Display */
+    #stream-card { display: none; }
+    #stream-img {
+      width: 100%;
+      height: auto;
+      border-radius: 8px;
+      border: 2px solid #334155;
+      margin-top: 1rem;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: bold;
+      background: #1e293b;
+      color: var(--accent-color);
+      border: 1px solid var(--accent-color);
+      margin-bottom: 1rem;
     }
   </style>
 </head>
 <body>
 
-  <div class="card">
-    <h1>Application Online</h1>
-    <p>Your entry point is loaded successfully. Place this file in your root folder to resolve Vercel deployment errors.</p>
-    <button class="btn" onclick="alert('Status: OK')">Check Connection</button>
+  <div class="container">
+    <!-- Config Card -->
+    <div class="card">
+      <h1>Starlink Control Center</h1>
+      <p>Enter your Cloudflare Tunnel URL below. It will be saved in your browser for future sessions.</p>
+      
+      <div class="input-group">
+        <input type="text" id="server-url" placeholder="https://xxx.trycloudflare.com">
+        <button class="btn" id="btn-check">Connect</button>
+        <button class="btn btn-clear" id="btn-clear" title="Clear saved URL">Clear</button>
+      </div>
+      
+      <div id="status-text"></div>
+    </div>
+
+    <!-- Live Stream Card -->
+    <div class="card" id="stream-card">
+      <span class="badge">LIVE STREAM</span>
+      <img id="stream-img" src="" alt="Live Camera Feed">
+    </div>
   </div>
+
+  <script>
+    const STORAGE_KEY = 'starlink_camera_url';
+    
+    const urlInput = document.getElementById('server-url');
+    const btnCheck = document.getElementById('btn-check');
+    const btnClear = document.getElementById('btn-clear');
+    const statusText = document.getElementById('status-text');
+    const streamCard = document.getElementById('stream-card');
+    const streamImg = document.getElementById('stream-img');
+
+    // 1. Load saved URL from localStorage on startup
+    window.addEventListener('DOMContentLoaded', () => {
+      const savedUrl = localStorage.getItem(STORAGE_KEY);
+      if (savedUrl) {
+        urlInput.value = savedUrl;
+        testAndLoadConnection(savedUrl);
+      }
+    });
+
+    // 2. Connect & Save URL
+    btnCheck.addEventListener('click', () => {
+      const rawUrl = urlInput.value.trim();
+      if (!rawUrl) {
+        showStatus("Please enter a URL first.", varColor('--danger-color'));
+        return;
+      }
+      testAndLoadConnection(rawUrl);
+    });
+
+    // 3. Clear stored URL
+    btnClear.addEventListener('click', () => {
+      localStorage.removeItem(STORAGE_KEY);
+      urlInput.value = '';
+      streamCard.style.display = 'none';
+      streamImg.src = '';
+      showStatus("Saved URL cleared.", "#cbd5e1");
+    });
+
+    // Core function to check server status & render stream
+    async function testAndLoadConnection(targetUrl) {
+      // Normalize URL format
+      if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+        targetUrl = 'https://' + targetUrl;
+      }
+      targetUrl = targetUrl.replace(/\/$/, ""); // Remove trailing slash
+
+      showStatus("Testing connection...", "#cbd5e1");
+
+      try {
+        const response = await fetch(targetUrl, { method: 'GET', mode: 'cors' });
+
+        // HTTP 200 or 401 (Auth Prompt required) confirms server is live
+        if (response.ok || response.status === 401) {
+          // Save valid URL to localStorage
+          localStorage.setItem(STORAGE_KEY, targetUrl);
+          urlInput.value = targetUrl;
+
+          showStatus("Connected! URL saved to browser storage. ✅", "#4ade80");
+
+          // Render live video feed
+          streamImg.src = `${targetUrl}/video_feed`;
+          streamCard.style.display = 'block';
+        } else {
+          showStatus(`Server error HTTP status: ${response.status}`, "#f87171");
+          streamCard.style.display = 'none';
+        }
+      } catch (error) {
+        showStatus("Connection Failed! Ensure starlink.py & Cloudflare are active. ❌", "#f87171");
+        streamCard.style.display = 'none';
+      }
+    }
+
+    function showStatus(message, color) {
+      statusText.innerText = message;
+      statusText.style.color = color;
+    }
+  </script>
 
 </body>
 </html>
